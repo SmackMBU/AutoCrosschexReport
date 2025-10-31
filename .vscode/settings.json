@@ -1,0 +1,16 @@
+{
+    "files.associations": {
+        "mdbtools.h": "c",
+        "chrono": "c",
+        "text_encoding": "c",
+        "typeindex": "c",
+        "typeinfo": "c",
+        "format": "c",
+        "queue": "c",
+        "stack": "c",
+        "stacktrace": "c",
+        "thread": "c",
+        "vector": "c",
+        "random": "c"
+    }
+}
