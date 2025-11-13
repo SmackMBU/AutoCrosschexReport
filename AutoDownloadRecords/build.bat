@@ -1,0 +1,1 @@
+gcc -Wall -g -O2 AutoDownloadRecords.c -L. -ltc-b_new_sdk -lodbc32 -o ../build/AutoCrosschex.exe 

@@ -11,6 +11,8 @@
         "stacktrace": "c",
         "thread": "c",
         "vector": "c",
-        "random": "c"
+        "random": "c",
+        "string.h": "c",
+        "stdio.h": "c"
     }
 }

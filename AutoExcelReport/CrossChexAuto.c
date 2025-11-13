@@ -4,7 +4,15 @@
 #include <sql.h>
 #include <sqlext.h>
 #include <string.h>
+#include <signal.h>
 #include "xlsxwriter.h"
+
+#define ERROR_LOG "ERROR"
+#define INFO_LOG "INFO"
+
+#define DB_CFG_PATH "cfg/db.cfg"
+#define CFG_PATH "cfg/paths.cfg"
+#define LOG_PATH "logs/autoreports"
 
 #define LIGHT_GRAY 0xDDDDDD
 #define NAME_MAX_LENGTH 100
@@ -28,6 +36,8 @@ typedef struct dept_file_path{
     struct dept_file_path *next;
 } dept_file_path;
 
+static FILE *log_file;
+
 static int year;
 static int month;
 static int day;
@@ -37,6 +47,81 @@ const char *months[] = {"январь", "февраль", "март", "апре�
                         "май", "июнь", "июль", "август",
                         "сентябрь", "октябрь", "ноябрь", "декабрь"};
 
+void print_log(char *type, char *str, ...){
+    va_list vl;
+    va_start(vl, str);
+
+    time_t now = time(NULL);
+    struct tm *tm_now = localtime(&now);
+
+    fprintf(log_file, "[%02d:%02d:%02d] %s: ", tm_now->tm_hour, tm_now->tm_min, tm_now->tm_sec, type);
+    vfprintf(log_file, str, vl);
+
+    va_end(vl);
+}
+void signal_handler(int sig){
+    print_log(ERROR_LOG, "Program terminated with signal %d\n\n", sig);
+    fclose(log_file);
+    exit(1);
+}
+void read_db_config(SQLCHAR *conn_str){
+    FILE *file = fopen(DB_CFG_PATH, "r");
+    if(!file){
+        print_log(ERROR_LOG, "failed to open database config %s\n\n", DB_CFG_PATH);
+        fclose(log_file);
+        exit(1);
+    }
+    int ch, i = 0;
+    char tmp_str[50];
+    char server[50], db_name[50], uid[50], pwd[50];
+
+    while((ch = fgetc(file)) != EOF){
+        switch(ch){
+            case '=':
+                tmp_str[i] = '\0';
+                i = 0;
+                int j = 0;
+                if(strcmp(tmp_str, "server") == 0){
+                    while((ch = fgetc(file)) != EOF && ch != '\n'){
+                        server[j] = ch;
+                        j++;
+                    }
+                    server[j] = 0;
+                }else if(strcmp(tmp_str, "database") == 0){
+                    while((ch = fgetc(file)) != EOF && ch != '\n'){
+                        db_name[j] = ch;
+                        j++;
+                    }
+                    db_name[j] = 0;
+                }else if(strcmp(tmp_str, "uid") == 0){
+                    while((ch = fgetc(file)) != EOF && ch != '\n'){
+                        uid[j] = ch;
+                        j++;
+                    }
+                    uid[j] = 0;
+                }else if(strcmp(tmp_str, "password") == 0){
+                    while((ch = fgetc(file)) != EOF && ch != '\n'){
+                        pwd[j] = ch;
+                        j++;
+                    }
+                    pwd[j] = 0;
+                }
+                break;
+            
+            case ' ':
+                break;
+
+            case '\n':
+                break;
+
+            default:
+                tmp_str[i] = ch;
+                i++;
+                break;
+        }
+    }
+    sprintf((char*)conn_str, "Driver={SQL Server};Server=%s\\SQLEXPRESS;Database=%s;UID=%s;PWD=%s;", server, db_name, uid, pwd);
+}
 int free_dept_file_path(dept_file_path *file_path){
     if (!file_path) return 1;
     dept_file_path *cur = file_path;
@@ -100,7 +185,7 @@ int get_db_length(SQLINTEGER *db_length, const char *db_name, SQLHSTMT *hStmt, c
 
     char *sql_request = malloc(len);
     if(!sql_request){
-        fprintf(stderr, "Failed to allocate memory for SQL query\n");
+        print_log(ERROR_LOG, "Failed to allocate memory for SQL query\n");
         return 1;
     }
 
@@ -114,7 +199,7 @@ int get_db_length(SQLINTEGER *db_length, const char *db_name, SQLHSTMT *hStmt, c
     SQLRETURN ret = SQLExecDirect(hStmt, (SQLCHAR*)sql_request, SQL_NTS);
 
     if(!SQL_SUCCEEDED(ret)){
-        fprintf(stderr, "Error executing SQL query, request: %s\n", sql_request);
+        print_log(ERROR_LOG, "Error executing SQL query, request: %s\n", sql_request);
         free(sql_request);
         return 1;
     }
@@ -125,7 +210,7 @@ int get_db_length(SQLINTEGER *db_length, const char *db_name, SQLHSTMT *hStmt, c
 
     free(sql_request);
     if(!*db_length){
-        fprintf(stderr, "Failed to get count of elements from db: %s\n", db_name);
+        print_log(ERROR_LOG, "Failed to get count of elements from db: %s\n", db_name);
         return 1;
     }
     return 0;
@@ -184,7 +269,7 @@ void sort_rec(check_rec *rec, int size){
 void get_check_rec(SQLHSTMT *hStmt, check_rec *rec, int size){
     char sql_query[150];
     sprintf(sql_query,
-     "SELECT Userid, CheckTime FROM dbo.Checkinout WHERE CheckTime BETWEEN '%d-%d-01T00:00:00.000' AND '%d-%d-%dT23:59:59.999';",
+     "SELECT Userid, CheckTime FROM dbo.Checkinout WHERE CheckTime BETWEEN '%04d-%02d-01T00:00:00.000' AND '%04d-%02d-%02dT23:59:59.999';",
     year, month, year, month, day);
     SQLExecDirect(hStmt, (SQLCHAR*)sql_query, SQL_NTS);
     
@@ -301,9 +386,9 @@ int create_dir_recursive(const char *path) {
     return 0;
 }
 int read_files_paths(dept_file_path *first){
-    FILE *file = fopen("files.cfg", "r");
+    FILE *file = fopen(CFG_PATH, "r");
     if(!file){
-        fprintf(stderr, "failed to open file files.cfg\n");
+        print_log(ERROR_LOG, "failed to open file %s\n", CFG_PATH);
         return 1;
     }
     dept_file_path *tmp = first;
@@ -329,7 +414,7 @@ int read_files_paths(dept_file_path *first){
                     param[j] = ch;
                     j++;
                     if(strcmp(param, "${year}") == 0){
-                        sprintf(param, "%d\0", year);
+                        sprintf(param, "%d", year);
                         for(int k = i-j+1; k <= i; k++){
                             tmp_str[k] = 0;
                         }
@@ -357,7 +442,7 @@ int read_files_paths(dept_file_path *first){
                 strcpy(tmp->dept_name, tmp_str);
             }else{
                 free_dept_file_path(first);
-                fprintf(stderr, "invalid files.cfg\n");
+                print_log(ERROR_LOG, "invalid %s\n", CFG_PATH);
                 return 1;
             }
         }else if(ch == '/'){
@@ -392,7 +477,6 @@ void write_user_to_xlsx(lxw_worksheet *worksheet, lxw_format *employe, lxw_forma
 
     int day_check_count;
     TIMESTAMP_STRUCT first_check;
-    int dept_index;
     int rec_index; 
     struct tm tmp_t = {0};
     tmp_t.tm_year = year-1900;
@@ -466,14 +550,31 @@ void write_user_to_xlsx(lxw_worksheet *worksheet, lxw_format *employe, lxw_forma
     }
 }
 
-int main(){
-    SetConsoleOutputCP(65001);
-    SetConsoleCP(65001);
+int main(int argc, char * argv[]){
     time_t now = time(NULL);
     struct tm *tm_now = localtime(&now);
     year = tm_now->tm_year+1900;
     month = tm_now->tm_mon+1;
     day = tm_now->tm_mday;
+
+    char *log_path = malloc(sizeof(char)*100);
+    sprintf(log_path, "%s/%02d-%02d-%04d.log", LOG_PATH, day, month, year);
+    log_file = fopen(log_path, "a");
+    free(log_path);
+    print_log(INFO_LOG, "The program has started\n");
+
+    signal(SIGSEGV, signal_handler);
+    signal(SIGABRT, signal_handler);
+    signal(SIGFPE,  signal_handler);
+
+    if(argc > 1){
+        if(sscanf(argv[1], "%02d:%02d:%04d", &day, &month, &year) != 3){
+            print_log(ERROR_LOG, "The data from the arguments was read incorrectly. The date format must be DD:MM:YYYY.\n");
+            print_log(INFO_LOG, "The program ended\n\n");
+            fclose(log_file);
+            return 1;
+        }
+    }
 
     dept_file_path *files_paths = malloc(sizeof(dept_file_path));
     files_paths->next = NULL;
@@ -490,20 +591,24 @@ int main(){
     SQLSetEnvAttr(hEnv, SQL_ATTR_ODBC_VERSION, (void *)SQL_OV_ODBC3, 0);
     SQLAllocHandle(SQL_HANDLE_DBC, hEnv, &hDbc);
 
-    SQLCHAR connStr[] = "Driver={SQL Server};Server=localhost\\SQLEXPRESS;Database=anviz;UID=anviz;PWD=ujcnm;";
-    ret = SQLDriverConnect(hDbc, NULL, connStr, SQL_NTS, NULL, 0, NULL, SQL_DRIVER_NOPROMPT);
+    SQLCHAR *conn_str = malloc(sizeof(SQLCHAR)*150);
+    read_db_config(conn_str);
+    ret = SQLDriverConnect(hDbc, NULL, conn_str, SQL_NTS, NULL, 0, NULL, SQL_DRIVER_NOPROMPT);
+    free(conn_str);
     
     if(!SQL_SUCCEEDED(ret)){
-        fprintf(stderr, "Database connection error\n");
+        print_log(ERROR_LOG, "Database connection error\n");
+        print_log(INFO_LOG, "The program ended\n\n");
+        fclose(log_file);
         return 1;
     }
     SQLAllocHandle(SQL_HANDLE_STMT, hDbc, &hStmt);
 
-    printf("Скачайте новые записи перед тем, как продолжить\n");
-    scanf("%c");
-
     SQLINTEGER users_count = 0;
     if(get_db_length(&users_count, "dbo.Userinfo", hStmt, NULL)){
+        print_log(ERROR_LOG, "Failed to get the number of users\n");
+        print_log(INFO_LOG, "The program ended\n\n");
+        fclose(log_file);
         return 1;
     }
     user *users = malloc(users_count*sizeof(user));
@@ -511,6 +616,9 @@ int main(){
 
     SQLINTEGER depts_count = 0;
     if(get_db_length(&depts_count, "dbo.Dept", hStmt, NULL)){
+        print_log(ERROR_LOG, "Failed to get the number of depts\n");
+        print_log(INFO_LOG, "The program ended\n\n");
+        fclose(log_file);
         return 1;
     }
     dept *depts = malloc(depts_count*sizeof(dept));
@@ -518,9 +626,12 @@ int main(){
 
     SQLINTEGER rec_count = 0;
     char condition[100];
-    sprintf(condition, "WHERE CheckTime BETWEEN '%d-%d-01T00:00:00.000' AND '%d-%d-%dT23:59:59.999'",
+    sprintf(condition, "WHERE CheckTime BETWEEN '%04d-%02d-01T00:00:00.000' AND '%04d-%02d-%02dT23:59:59.999'",
             year, month, year, month, day);
     if(get_db_length(&rec_count, "dbo.Checkinout", hStmt, condition)){
+        print_log(ERROR_LOG, "Failed to get the number of records\n");
+        print_log(INFO_LOG, "The program ended\n\n");
+        fclose(log_file);
         return 1;
     }
     check_rec *rec = malloc(rec_count*sizeof(check_rec));
@@ -546,9 +657,13 @@ int main(){
     for(int i = 0; i < users_count; i++){
         if(current_dept != users[i].dept_id){
             if(workbook){
-                workbook_close(workbook);
+                lxw_error error = workbook_close(workbook);
+                if(error){
+                    print_log(ERROR_LOG, "An error occurred while closing the workbook %s: %d\n", current_dept_name, error);
+                }else{
+                    print_log(INFO_LOG, "A report on the department was created: %s\n", current_dept_name);
+                }
                 current_row = 0;
-                printf("Создан отчет по отделу %s\n", current_dept_name);
             }
             current_dept = users[i].dept_id;
             workbook = 0;
@@ -584,11 +699,13 @@ int main(){
         }
     }
     if(workbook){
-        workbook_close(workbook);
+        lxw_error error = workbook_close(workbook);
+        if(error){
+            print_log(ERROR_LOG, "An error occurred while closing the workbook: %d\n", error);
+        }
     }
-    printf("Программа завершилась успешно, нажмите любую клавишу...");
-    getchar();
-    scanf("%c");
+    print_log(INFO_LOG, "The program ended\n\n");
+    fclose(log_file);
 
     return 0;
 }

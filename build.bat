@@ -1,1 +1,0 @@
-gcc -g CrossChexAuto.c -o CrossChexAuto.exe -lodbc32 -lxlsxwriter -lz -O2
