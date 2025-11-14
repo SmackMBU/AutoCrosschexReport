@@ -53,6 +53,10 @@ void read_db_config(SQLCHAR *conn_str){
     int ch, i = 0;
     char tmp_str[50];
     char server[50], db_name[50], uid[50], pwd[50];
+    const char *keys[] = {"server", "database", "uid", "password"};
+    char *values[] = {server, db_name, uid, pwd};
+    char *value = NULL;
+
 
     while((ch = fgetc(file)) != EOF){
         switch(ch){
@@ -60,30 +64,19 @@ void read_db_config(SQLCHAR *conn_str){
                 tmp_str[i] = '\0';
                 i = 0;
                 int j = 0;
-                if(strcmp(tmp_str, "server") == 0){
+                for(int k = 0; k < 4; k++){
+                    if(strcmp(tmp_str, keys[k]) == 0){
+                        value = values[k];
+                        break;
+                    }
+                }
+                if(value){
                     while((ch = fgetc(file)) != EOF && ch != '\n'){
-                        server[j] = ch;
+                        value[j] = ch;
                         j++;
                     }
-                    server[j] = 0;
-                }else if(strcmp(tmp_str, "database") == 0){
-                    while((ch = fgetc(file)) != EOF && ch != '\n'){
-                        db_name[j] = ch;
-                        j++;
-                    }
-                    db_name[j] = 0;
-                }else if(strcmp(tmp_str, "uid") == 0){
-                    while((ch = fgetc(file)) != EOF && ch != '\n'){
-                        uid[j] = ch;
-                        j++;
-                    }
-                    uid[j] = 0;
-                }else if(strcmp(tmp_str, "password") == 0){
-                    while((ch = fgetc(file)) != EOF && ch != '\n'){
-                        pwd[j] = ch;
-                        j++;
-                    }
-                    pwd[j] = 0;
+                    value[j] = 0;
+                    value = NULL;
                 }
                 break;
             
