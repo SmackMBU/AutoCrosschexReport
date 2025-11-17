@@ -14,6 +14,10 @@
 #define CFG_PATH "cfg/paths.cfg"
 #define LOG_PATH "logs/autoreports"
 
+#define ZABBIX_IP "192.168.1.75"
+#define ZABBIX_HOST "auto_crosschex"
+#define ZABBIX_DATA_NAME "log.report.error"
+
 #define LIGHT_GRAY 0xDDDDDD
 #define NAME_MAX_LENGTH 100
 
@@ -53,6 +57,14 @@ void print_log(char *type, char *str, ...){
 
     time_t now = time(NULL);
     struct tm *tm_now = localtime(&now);
+
+    if(0 == strcmp(type, ERROR_LOG)){
+        char tmp[150];
+        char send_to_zabbix[200];
+        sprintf(tmp, "zabbix_sender -z %s -s \"%s\" -k %s -o \"ERROR: %s\"", ZABBIX_IP, ZABBIX_HOST, ZABBIX_DATA_NAME, str);
+        vsprintf(send_to_zabbix, tmp, vl);
+        system(send_to_zabbix);
+    }
 
     fprintf(log_file, "[%02d:%02d:%02d] %s: ", tm_now->tm_hour, tm_now->tm_min, tm_now->tm_sec, type);
     vfprintf(log_file, str, vl);
@@ -694,7 +706,9 @@ int main(int argc, char * argv[]){
     if(workbook){
         lxw_error error = workbook_close(workbook);
         if(error){
-            print_log(ERROR_LOG, "An error occurred while closing the workbook: %d\n", error);
+            print_log(ERROR_LOG, "An error occurred while closing the workbook %s: %d\n", current_dept_name, error);
+        }else{
+            print_log(INFO_LOG, "A report on the department was created: %s\n", current_dept_name);
         }
     }
     print_log(INFO_LOG, "The program ended\n\n");

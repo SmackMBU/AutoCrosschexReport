@@ -13,6 +13,7 @@
         "vector": "c",
         "random": "c",
         "string.h": "c",
-        "stdio.h": "c"
+        "stdio.h": "c",
+        "xlsxwriter.h": "c"
     }
 }

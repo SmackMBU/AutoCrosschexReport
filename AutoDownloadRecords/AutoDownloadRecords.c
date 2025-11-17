@@ -16,6 +16,10 @@
 #define LOG_PATH "logs/autodownload"
 #define DB_CFG_PATH "cfg/db.cfg"
 
+#define ZABBIX_IP "192.168.1.75"
+#define ZABBIX_HOST "auto_crosschex"
+#define ZABBIX_DATA_NAME "log.download.error"
+
 #define MAX_IP_LEN 16
 #define UTC_OFFSET 4
 
@@ -32,6 +36,14 @@ void print_log(char *type, char *str, ...){
 
     time_t now = time(NULL);
     struct tm *tm_now = localtime(&now);
+
+    if(0 == strcmp(type, ERROR_LOG)){
+        char tmp[150];
+        char send_to_zabbix[200];
+        sprintf(tmp, "zabbix_sender -z %s -s \"%s\" -k %s -o \"ERROR: %s\"", ZABBIX_IP, ZABBIX_HOST, ZABBIX_DATA_NAME, str);
+        vsprintf(send_to_zabbix, tmp, vl);
+        system(send_to_zabbix);
+    }
 
     fprintf(log_file, "[%02d:%02d:%02d] %s: ", tm_now->tm_hour, tm_now->tm_min, tm_now->tm_sec, type);
     vfprintf(log_file, str, vl);
