@@ -4,7 +4,6 @@
 #include <sql.h>
 #include <sqlext.h>
 #include <string.h>
-#include <signal.h>
 #include "xlsxwriter.h"
 
 #define ERROR_LOG "ERROR"
@@ -13,10 +12,7 @@
 #define DB_CFG_PATH "cfg/db.cfg"
 #define CFG_PATH "cfg/paths.cfg"
 #define LOG_PATH "logs/autoreports"
-
-#define ZABBIX_IP "192.168.1.75"
-#define ZABBIX_HOST "auto_crosschex"
-#define ZABBIX_DATA_NAME "log.report.error"
+#define ZABBIX_CFG_PATH "cfg/zabbix.cfg"
 
 #define LIGHT_GRAY 0xDDDDDD
 #define NAME_MAX_LENGTH 100
@@ -42,6 +38,11 @@ typedef struct dept_file_path{
 
 static FILE *log_file;
 
+static int zabbix_enabled;
+static char zabbix_ip[30];
+static char zabbix_host[150];
+static char zabbix_item[150];
+
 static int year;
 static int month;
 static int day;
@@ -51,30 +52,38 @@ const char *months[] = {"январь", "февраль", "март", "апре�
                         "май", "июнь", "июль", "август",
                         "сентябрь", "октябрь", "ноябрь", "декабрь"};
 
-void print_log(char *type, char *str, ...){
+void print_log(const char *type, const char *fmt, ...) {
     va_list vl;
-    va_start(vl, str);
+    va_start(vl, fmt);
 
     time_t now = time(NULL);
     struct tm *tm_now = localtime(&now);
 
-    if(0 == strcmp(type, ERROR_LOG)){
-        char tmp[150];
-        char send_to_zabbix[200];
-        sprintf(tmp, "zabbix_sender -z %s -s \"%s\" -k %s -o \"ERROR: %s\"", ZABBIX_IP, ZABBIX_HOST, ZABBIX_DATA_NAME, str);
-        vsprintf(send_to_zabbix, tmp, vl);
-        system(send_to_zabbix);
+    char message[1024];
+    va_list vl_copy;
+    va_copy(vl_copy, vl);
+    vsnprintf(message, sizeof(message), fmt, vl_copy);
+    va_end(vl_copy);
+
+    if (zabbix_enabled && 0 == strcmp(type, ERROR_LOG)) {
+        char send_to_zabbix[1200];
+        int n = snprintf(send_to_zabbix, sizeof(send_to_zabbix),
+                         "zabbix_sender -z %s -s \"%s\" -k %s -o \"ERROR: %s\"",
+                         zabbix_ip, zabbix_host, zabbix_item, message);
+        if (n > 0 && n < (int)sizeof(send_to_zabbix)) {
+            system(send_to_zabbix);
+        } else {
+            fprintf(stderr, "zabbix command too long or formatting error\n");
+        }
     }
 
-    fprintf(log_file, "[%02d:%02d:%02d] %s: ", tm_now->tm_hour, tm_now->tm_min, tm_now->tm_sec, type);
-    vfprintf(log_file, str, vl);
+    if (log_file) {
+        fprintf(log_file, "[%02d:%02d:%02d] %s: %s",
+                tm_now->tm_hour, tm_now->tm_min, tm_now->tm_sec, type, message);
+        fflush(log_file);
+    }
 
     va_end(vl);
-}
-void signal_handler(int sig){
-    print_log(ERROR_LOG, "Program terminated with signal %d\n\n", sig);
-    fclose(log_file);
-    exit(1);
 }
 void read_db_config(SQLCHAR *conn_str){
     FILE *file = fopen(DB_CFG_PATH, "r");
@@ -126,6 +135,63 @@ void read_db_config(SQLCHAR *conn_str){
         }
     }
     sprintf((char*)conn_str, "Driver={SQL Server};Server=%s\\SQLEXPRESS;Database=%s;UID=%s;PWD=%s;", server, db_name, uid, pwd);
+}
+void read_zabbix_config(){
+    FILE *file = fopen(ZABBIX_CFG_PATH, "r");
+    if(!file){
+        print_log(ERROR_LOG, "failed to open zabbix config %s\n\n", ZABBIX_CFG_PATH);
+        return;
+    }
+    int ch, i = 0;
+    char tmp_str[50];
+    const char *keys[] = {"enabled", "server", "host", "download.item"};
+    char *values[] = {zabbix_ip, zabbix_host, zabbix_item};
+    char *value = NULL;
+
+    while((ch = fgetc(file)) != EOF){
+        switch(ch){
+            case '=':
+                tmp_str[i] = '\0';
+                i = 0;
+                int j = 0;
+                if(strcmp(tmp_str, keys[0]) == 0){
+                    if((ch = fgetc(file)) != EOF && ch >= 48 && ch <= 57){
+                        zabbix_enabled = ch-48;
+                    }
+                    if(!zabbix_enabled){
+                        return;
+                    }
+                    break;
+                }
+                for(int k = 1; k < 4; k++){
+                    if(strcmp(tmp_str, keys[k]) == 0){
+                        value = values[k-1];
+                        break;
+                    }
+                }
+                if(value){
+                    while((ch = fgetc(file)) != EOF && ch != '\n'){
+                        value[j] = ch;
+                        j++;
+                    }
+                    value[j] = 0;
+                    value = NULL;
+                }
+                break;
+            
+            case ' ':
+                break;
+
+            case '\n':
+                i = 0;
+                break;
+
+            default:
+                tmp_str[i] = ch;
+                i++;
+                break;
+        }
+    }
 }
 int free_dept_file_path(dept_file_path *file_path){
     if (!file_path) return 1;
@@ -561,6 +627,8 @@ int main(int argc, char * argv[]){
     year = tm_now->tm_year+1900;
     month = tm_now->tm_mon+1;
     day = tm_now->tm_mday;
+    
+    zabbix_enabled = 0;
 
     char *log_path = malloc(sizeof(char)*100);
     sprintf(log_path, "%s/%02d-%02d-%04d.log", LOG_PATH, day, month, year);
@@ -568,9 +636,7 @@ int main(int argc, char * argv[]){
     free(log_path);
     print_log(INFO_LOG, "The program has started\n");
 
-    signal(SIGSEGV, signal_handler);
-    signal(SIGABRT, signal_handler);
-    signal(SIGFPE,  signal_handler);
+    read_zabbix_config();
 
     if(argc > 1){
         if(sscanf(argv[1], "%02d:%02d:%04d", &day, &month, &year) != 3){

@@ -4,7 +4,6 @@
 #include <time.h>
 #include <sql.h>
 #include <sqlext.h>
-#include <signal.h>
 #include <stdarg.h>
 #include "crosschex.h"
 
@@ -15,45 +14,55 @@
 #define CFG_PATH "cfg/devices.cfg"
 #define LOG_PATH "logs/autodownload"
 #define DB_CFG_PATH "cfg/db.cfg"
-
-#define ZABBIX_IP "192.168.1.75"
-#define ZABBIX_HOST "auto_crosschex"
-#define ZABBIX_DATA_NAME "log.download.error"
+#define ZABBIX_CFG_PATH "cfg/zabbix.cfg"
 
 #define MAX_IP_LEN 16
 #define UTC_OFFSET 4
 
 static FILE *log_file;
 
+static int zabbix_enabled;
+static char zabbix_ip[30];
+static char zabbix_host[150];
+static char zabbix_item[150];
+
 typedef struct{
     int sensor_id;
     char ip[MAX_IP_LEN];
 } device_ip;
 
-void print_log(char *type, char *str, ...){
+void print_log(const char *type, const char *fmt, ...) {
     va_list vl;
-    va_start(vl, str);
+    va_start(vl, fmt);
 
     time_t now = time(NULL);
     struct tm *tm_now = localtime(&now);
 
-    if(0 == strcmp(type, ERROR_LOG)){
-        char tmp[150];
-        char send_to_zabbix[200];
-        sprintf(tmp, "zabbix_sender -z %s -s \"%s\" -k %s -o \"ERROR: %s\"", ZABBIX_IP, ZABBIX_HOST, ZABBIX_DATA_NAME, str);
-        vsprintf(send_to_zabbix, tmp, vl);
-        system(send_to_zabbix);
+    char message[1024];
+    va_list vl_copy;
+    va_copy(vl_copy, vl);
+    vsnprintf(message, sizeof(message), fmt, vl_copy);
+    va_end(vl_copy);
+
+    if (zabbix_enabled && 0 == strcmp(type, ERROR_LOG)) {
+        char send_to_zabbix[1200];
+        int n = snprintf(send_to_zabbix, sizeof(send_to_zabbix),
+                         "zabbix_sender -z %s -s \"%s\" -k %s -o \"ERROR: %s\"",
+                         zabbix_ip, zabbix_host, zabbix_item, message);
+        if (n > 0 && n < (int)sizeof(send_to_zabbix)) {
+            system(send_to_zabbix);
+        } else {
+            fprintf(stderr, "zabbix command too long or formatting error\n");
+        }
     }
 
-    fprintf(log_file, "[%02d:%02d:%02d] %s: ", tm_now->tm_hour, tm_now->tm_min, tm_now->tm_sec, type);
-    vfprintf(log_file, str, vl);
+    if (log_file) {
+        fprintf(log_file, "[%02d:%02d:%02d] %s: %s",
+                tm_now->tm_hour, tm_now->tm_min, tm_now->tm_sec, type, message);
+        fflush(log_file);
+    }
 
     va_end(vl);
-}
-void signal_handler(int sig){
-    print_log(ERROR_LOG, "Program terminated with signal %d\n\n", sig);
-    fclose(log_file);
-    exit(1);
 }
 void read_db_config(SQLCHAR *conn_str){
     FILE *file = fopen(DB_CFG_PATH, "r");
@@ -105,6 +114,63 @@ void read_db_config(SQLCHAR *conn_str){
         }
     }
     sprintf((char*)conn_str, "Driver={SQL Server};Server=%s\\SQLEXPRESS;Database=%s;UID=%s;PWD=%s;", server, db_name, uid, pwd);
+}
+void read_zabbix_config(){
+    FILE *file = fopen(ZABBIX_CFG_PATH, "r");
+    if(!file){
+        print_log(ERROR_LOG, "failed to open zabbix config %s\n\n", ZABBIX_CFG_PATH);
+        return;
+    }
+    int ch, i = 0;
+    char tmp_str[50];
+    const char *keys[] = {"enabled", "server", "host", "download.item"};
+    char *values[] = {zabbix_ip, zabbix_host, zabbix_item};
+    char *value = NULL;
+
+    while((ch = fgetc(file)) != EOF){
+        switch(ch){
+            case '=':
+                tmp_str[i] = '\0';
+                i = 0;
+                int j = 0;
+                if(strcmp(tmp_str, keys[0]) == 0){
+                    if((ch = fgetc(file)) != EOF && ch >= 48 && ch <= 57){
+                        zabbix_enabled = ch-48;
+                    }
+                    if(!zabbix_enabled){
+                        return;
+                    }
+                    break;
+                }
+                for(int k = 1; k < 4; k++){
+                    if(strcmp(tmp_str, keys[k]) == 0){
+                        value = values[k-1];
+                        break;
+                    }
+                }
+                if(value){
+                    while((ch = fgetc(file)) != EOF && ch != '\n'){
+                        value[j] = ch;
+                        j++;
+                    }
+                    value[j] = 0;
+                    value = NULL;
+                }
+                break;
+            
+            case ' ':
+                break;
+
+            case '\n':
+                i = 0;
+                break;
+
+            default:
+                tmp_str[i] = ch;
+                i++;
+                break;
+        }
+    }
 }
 int read_device_info(device_ip **devices_ip){
     FILE *file = fopen(CFG_PATH, "r");
@@ -209,18 +275,17 @@ int main(){
     time_t now = time(NULL);
     struct tm *tm_now = localtime(&now);
     char log_path[64];
+    zabbix_enabled = 0;
     
     snprintf(log_path, sizeof(log_path), "%s/%02d-%02d-%04d.log", LOG_PATH, tm_now->tm_mday, tm_now->tm_mon+1, tm_now->tm_year+1900);
     log_file = fopen(log_path, "a");
     print_log(INFO_LOG, "The program has started\n");
 
-    signal(SIGSEGV, signal_handler);
-    signal(SIGABRT, signal_handler);
-    signal(SIGFPE,  signal_handler);
+    read_zabbix_config();
 
     device_ip *devices = NULL;
     int devices_len = read_device_info(&devices);
-    if(!devices){
+    if(devices_len <= 0){
         print_log(ERROR_LOG, "Failed to get devices from cfg file\n");
         print_log(INFO_LOG, "The program ended\n\n");
 
@@ -255,17 +320,30 @@ int main(){
     int devIdx;
     int type = 0;
     char buffer[1024];
-    int len;
-    CCHEX_RET_DEV_STATUS_STRU dev_info;
+    int len, fail_counter = 0;
+    CCHEX_RET_DEV_STATUS_STRU dev_info = {0};
     CCHEX_RET_RECORD_INFO_STRU prev_ret = {0};
 
     CChex_Init();
     
     for(int i = 0; i<devices_len; i++){
         handle = CChex_Start();
+        memset(&dev_info, 0, sizeof(dev_info));
+
+        if(!handle){
+            i--;
+            fail_counter++;
+            if(fail_counter >= 50){
+                print_log(ERROR_LOG, "Failed to init Crosschex handle");
+                fclose(log_file);
+                return 1;
+            }
+            continue;
+        }
+        fail_counter = 0;
+
         CChex_SetSdkConfig(handle, 0, 1, 0);
 
-        dev_info.NewRecNum = -1;
         devIdx = CCHex_ClientConnect(handle, devices[i].ip, 5010);
 
         if(devIdx < 0){
@@ -276,24 +354,18 @@ int main(){
         Sleep(200);
         for(int j = 0; j<50; j++){
             len = CChex_Update(handle, &devIdx, &type, buffer, sizeof(buffer));
-            if (len > 0) {
-                if(type == 19){
-                    memcpy(&dev_info, buffer, sizeof(dev_info));
-                    if(dev_info.NewRecNum > 0){
-                        CChex_DownloadAllNewRecords(handle, devIdx);
-                    }
-                    Sleep(200);
-                    break;
+            if ((size_t)len >= sizeof(dev_info) && type == 19) {
+                memcpy(&dev_info, buffer, sizeof(dev_info));
+                if(dev_info.NewRecNum > 0){
+                    CChex_DownloadAllNewRecords(handle, devIdx);
                 }
+                Sleep(200);
+                break;
+
             }
             Sleep(200);
         }
-        if(dev_info.NewRecNum == -1){
-            print_log(ERROR_LOG, "Failed to get data from device number %d\n", devices[i].sensor_id);
-            CChex_Stop(handle);
-            Sleep(1000);
-            continue;
-        }
+        
         print_log(INFO_LOG, "Number of new entries on device number %d: %u\n", devices[i].sensor_id, dev_info.NewRecNum);
 
         int j = 0;
@@ -301,26 +373,28 @@ int main(){
             len = CChex_Update(handle, &devIdx, &type, buffer, sizeof(buffer));
             if(len > 0 && type == 71){
                 CCHEX_RET_RECORD_INFO_STRU ret;
-                memcpy(&ret, buffer, sizeof(ret));
-                if(cmp_records(&ret, &prev_ret)){
-                    Sleep(200);
-                    continue;
+                if((size_t)len >= sizeof(ret)){
+                    memcpy(&ret, buffer, sizeof(ret));
+                    if(cmp_records(&ret, &prev_ret)){
+                        Sleep(200);
+                        continue;
+                    }
+                    memcpy(&prev_ret, &ret, sizeof(prev_ret));
+
+                    unsigned int seconds, employee_id;
+                    rev_bytes(ret.Date, 4);
+                    rev_bytes(ret.EmployeeId, MAX_EMPLOYEE_ID);
+
+                    memcpy(&seconds, ret.Date, sizeof(seconds));
+                    memcpy(&employee_id, ret.EmployeeId, sizeof(employee_id));
+                    struct tm *date = sec_to_date(seconds);
+                    
+                    insert_rec(hStmt, employee_id, date, devices[i].sensor_id);
+
+                    print_log(INFO_LOG, "A new recording has been downloaded, Employee ID: %u\n",employee_id);
+
+                    j++;
                 }
-                memcpy(&prev_ret, &ret, sizeof(prev_ret));
-
-                unsigned int seconds, employee_id;
-                rev_bytes(ret.Date, 4);
-                rev_bytes(ret.EmployeeId, MAX_EMPLOYEE_ID);
-
-                memcpy(&seconds, ret.Date, sizeof(seconds));
-                memcpy(&employee_id, ret.EmployeeId, sizeof(employee_id));
-                struct tm *date = sec_to_date(seconds);
-                
-                insert_rec(hStmt, employee_id, date, devices[i].sensor_id);
-
-                print_log(INFO_LOG, "A new recording has been downloaded, Employee ID: %u\n",employee_id);
-
-                j++;
             }
             Sleep(200);
         }
@@ -329,6 +403,7 @@ int main(){
 
         while (CChex_Update(handle, &devIdx, &type, buffer, sizeof(buffer)) > 0);
         CChex_Stop(handle);
+        handle = NULL;
     }
 
     SQLFreeHandle(SQL_HANDLE_DBC, hDbc);
