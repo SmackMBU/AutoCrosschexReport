@@ -1,1 +1,0 @@
-gcc -Wall -g CrossChexAuto.c -o ../build/autoreports.exe -lodbc32 -lxlsxwriter -lz -O2

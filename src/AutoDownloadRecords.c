@@ -7,9 +7,6 @@
 #include <stdarg.h>
 #include "crosschex.h"
 
-#define ERROR_LOG "ERROR"
-#define INFO_LOG "INFO"
-
 #define AUTO_REPORT_PATH "autoreports.exe"
 #define CFG_PATH "cfg/devices.cfg"
 #define LOG_PATH "logs/autodownload"
@@ -25,6 +22,10 @@ static int zabbix_enabled;
 static char zabbix_ip[30];
 static char zabbix_host[150];
 static char zabbix_item[150];
+
+static const char error_log[] = "ERROR";
+static const char info_log[] = "INFO";
+static const char warning_log[] = "WARNING";
 
 typedef struct{
     int sensor_id;
@@ -44,7 +45,7 @@ void print_log(const char *type, const char *fmt, ...) {
     vsnprintf(message, sizeof(message), fmt, vl_copy);
     va_end(vl_copy);
 
-    if (zabbix_enabled && 0 == strcmp(type, ERROR_LOG)) {
+    if (zabbix_enabled && type == error_log) {
         char send_to_zabbix[1200];
         int n = snprintf(send_to_zabbix, sizeof(send_to_zabbix),
                          "zabbix_sender -z %s -s \"%s\" -k %s -o \"ERROR: %s\"",
@@ -67,7 +68,7 @@ void print_log(const char *type, const char *fmt, ...) {
 void read_db_config(SQLCHAR *conn_str){
     FILE *file = fopen(DB_CFG_PATH, "r");
     if(!file){
-        print_log(ERROR_LOG, "failed to open database config %s\n\n", DB_CFG_PATH);
+        print_log(error_log, "failed to open database config %s\n\n", DB_CFG_PATH);
         fclose(log_file);
         exit(1);
     }
@@ -118,7 +119,7 @@ void read_db_config(SQLCHAR *conn_str){
 void read_zabbix_config(){
     FILE *file = fopen(ZABBIX_CFG_PATH, "r");
     if(!file){
-        print_log(ERROR_LOG, "failed to open zabbix config %s\n\n", ZABBIX_CFG_PATH);
+        print_log(error_log, "failed to open zabbix config %s\n\n", ZABBIX_CFG_PATH);
         return;
     }
     int ch, i = 0;
@@ -175,7 +176,7 @@ void read_zabbix_config(){
 int read_device_info(device_ip **devices_ip){
     FILE *file = fopen(CFG_PATH, "r");
     if(!file){
-        print_log(ERROR_LOG, "Failed to open config file %s\n", CFG_PATH);
+        print_log(error_log, "Failed to open devices config file %s\n", CFG_PATH);
         return -1;
     }
 
@@ -214,7 +215,7 @@ int read_device_info(device_ip **devices_ip){
     fclose(file);
     *devices_ip = malloc(sizeof(device_ip)*j);
     if (!*devices_ip) {
-        print_log(ERROR_LOG, "Failed to allocate memory for devices_ip\n");
+        print_log(error_log, "Failed to allocate memory for devices_ip\n");
         return -1;
     }
     memcpy(*devices_ip, devices, sizeof(device_ip)*j);
@@ -253,7 +254,7 @@ void insert_rec(SQLHSTMT *hStmt, unsigned int user_id, const struct tm *time, in
 
     ret = SQLExecDirect(hStmt, (SQLCHAR*)sql_query, SQL_NTS);
     if (!(ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO)) {
-        print_log(ERROR_LOG, "An error occurred while executing a database query. Query: %s\n", sql_query);
+        print_log(warning_log, "An error occurred while executing a database query. Query: %s\n", sql_query);
     }
     SQLCloseCursor(hStmt);
 }
@@ -279,15 +280,15 @@ int main(){
     
     snprintf(log_path, sizeof(log_path), "%s/%02d-%02d-%04d.log", LOG_PATH, tm_now->tm_mday, tm_now->tm_mon+1, tm_now->tm_year+1900);
     log_file = fopen(log_path, "a");
-    print_log(INFO_LOG, "The program has started\n");
+    print_log(info_log, "The program has started\n");
 
     read_zabbix_config();
 
     device_ip *devices = NULL;
     int devices_len = read_device_info(&devices);
     if(devices_len <= 0){
-        print_log(ERROR_LOG, "Failed to get devices from cfg file\n");
-        print_log(INFO_LOG, "The program ended\n\n");
+        print_log(error_log, "Failed to get devices from cfg file\n");
+        print_log(info_log, "The program ended\n\n");
 
         fclose(log_file);
         return 1;
@@ -308,8 +309,8 @@ int main(){
     free(conn_str);
     
     if(!SQL_SUCCEEDED(ret)){
-        print_log(ERROR_LOG, "Database connection error\n");
-        print_log(INFO_LOG, "The program ended\n\n");
+        print_log(error_log, "Database connection error\n");
+        print_log(info_log, "The program ended\n\n");
 
         fclose(log_file);
         return 1;
@@ -334,7 +335,7 @@ int main(){
             i--;
             fail_counter++;
             if(fail_counter >= 50){
-                print_log(ERROR_LOG, "Failed to init Crosschex handle");
+                print_log(error_log, "Failed to init Crosschex handle");
                 fclose(log_file);
                 return 1;
             }
@@ -366,7 +367,7 @@ int main(){
             Sleep(200);
         }
         
-        print_log(INFO_LOG, "Number of new entries on device number %d: %u\n", devices[i].sensor_id, dev_info.NewRecNum);
+        print_log(info_log, "Number of new entries on device number %d: %u\n", devices[i].sensor_id, dev_info.NewRecNum);
 
         int j = 0;
         while(j < dev_info.NewRecNum){
@@ -391,7 +392,7 @@ int main(){
                     
                     insert_rec(hStmt, employee_id, date, devices[i].sensor_id);
 
-                    print_log(INFO_LOG, "A new recording has been downloaded, Employee ID: %u\n",employee_id);
+                    print_log(info_log, "A new recording has been downloaded, Employee ID: %u\n",employee_id);
 
                     j++;
                 }
@@ -411,7 +412,7 @@ int main(){
 
     system(AUTO_REPORT_PATH);
 
-    print_log(INFO_LOG, "Auto report was launched\n");
+    print_log(info_log, "Auto report was launched\n");
 
     if(tm_now->tm_mday == 1){
         tm_now->tm_mday = 0;
@@ -420,10 +421,10 @@ int main(){
         sprintf(start_query, "%s %02d:%02d:%04d", AUTO_REPORT_PATH, tm_now->tm_mday, tm_now->tm_mon+1, tm_now->tm_year+1900);
         system(start_query);
 
-        print_log(INFO_LOG, "The auto report for the previous month was launched\n");
+        print_log(info_log, "The auto report for the previous month was launched\n");
     }
 
-    print_log(INFO_LOG, "The program ended\n\n");
+    print_log(info_log, "The program ended\n\n");
     fclose(log_file);
     return 0;
 }

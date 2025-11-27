@@ -6,9 +6,6 @@
 #include <string.h>
 #include "xlsxwriter.h"
 
-#define ERROR_LOG "ERROR"
-#define INFO_LOG "INFO"
-
 #define DB_CFG_PATH "cfg/db.cfg"
 #define CFG_PATH "cfg/paths.cfg"
 #define LOG_PATH "logs/autoreports"
@@ -43,6 +40,9 @@ static char zabbix_ip[30];
 static char zabbix_host[150];
 static char zabbix_item[150];
 
+static const char error_log[] = "ERROR";
+static const char info_log[] = "INFO";
+
 static int year;
 static int month;
 static int day;
@@ -65,7 +65,7 @@ void print_log(const char *type, const char *fmt, ...) {
     vsnprintf(message, sizeof(message), fmt, vl_copy);
     va_end(vl_copy);
 
-    if (zabbix_enabled && 0 == strcmp(type, ERROR_LOG)) {
+    if (zabbix_enabled && type == error_log) {
         char send_to_zabbix[1200];
         int n = snprintf(send_to_zabbix, sizeof(send_to_zabbix),
                          "zabbix_sender -z %s -s \"%s\" -k %s -o \"ERROR: %s\"",
@@ -88,7 +88,7 @@ void print_log(const char *type, const char *fmt, ...) {
 void read_db_config(SQLCHAR *conn_str){
     FILE *file = fopen(DB_CFG_PATH, "r");
     if(!file){
-        print_log(ERROR_LOG, "failed to open database config %s\n\n", DB_CFG_PATH);
+        print_log(error_log, "failed to open database config %s\n\n", DB_CFG_PATH);
         fclose(log_file);
         exit(1);
     }
@@ -139,7 +139,7 @@ void read_db_config(SQLCHAR *conn_str){
 void read_zabbix_config(){
     FILE *file = fopen(ZABBIX_CFG_PATH, "r");
     if(!file){
-        print_log(ERROR_LOG, "failed to open zabbix config %s\n\n", ZABBIX_CFG_PATH);
+        print_log(error_log, "failed to open zabbix config %s\n\n", ZABBIX_CFG_PATH);
         return;
     }
     int ch, i = 0;
@@ -256,7 +256,7 @@ int get_db_length(SQLINTEGER *db_length, const char *db_name, SQLHSTMT *hStmt, c
 
     char *sql_request = malloc(len);
     if(!sql_request){
-        print_log(ERROR_LOG, "Failed to allocate memory for SQL query\n");
+        print_log(error_log, "Failed to allocate memory for SQL query\n");
         return 1;
     }
 
@@ -270,7 +270,7 @@ int get_db_length(SQLINTEGER *db_length, const char *db_name, SQLHSTMT *hStmt, c
     SQLRETURN ret = SQLExecDirect(hStmt, (SQLCHAR*)sql_request, SQL_NTS);
 
     if(!SQL_SUCCEEDED(ret)){
-        print_log(ERROR_LOG, "Error executing SQL query, request: %s\n", sql_request);
+        print_log(error_log, "Error executing SQL query, request: %s\n", sql_request);
         free(sql_request);
         return 1;
     }
@@ -281,7 +281,7 @@ int get_db_length(SQLINTEGER *db_length, const char *db_name, SQLHSTMT *hStmt, c
 
     free(sql_request);
     if(!*db_length){
-        print_log(ERROR_LOG, "Failed to get count of elements from db: %s\n", db_name);
+        print_log(error_log, "Failed to get count of elements from db: %s\n", db_name);
         return 1;
     }
     return 0;
@@ -459,7 +459,7 @@ int create_dir_recursive(const char *path) {
 int read_files_paths(dept_file_path *first){
     FILE *file = fopen(CFG_PATH, "r");
     if(!file){
-        print_log(ERROR_LOG, "failed to open file %s\n", CFG_PATH);
+        print_log(error_log, "failed to open file %s\n", CFG_PATH);
         return 1;
     }
     dept_file_path *tmp = first;
@@ -513,7 +513,7 @@ int read_files_paths(dept_file_path *first){
                 strcpy(tmp->dept_name, tmp_str);
             }else{
                 free_dept_file_path(first);
-                print_log(ERROR_LOG, "invalid %s\n", CFG_PATH);
+                print_log(error_log, "invalid %s\n", CFG_PATH);
                 return 1;
             }
         }else if(ch == '/'){
@@ -634,14 +634,14 @@ int main(int argc, char * argv[]){
     sprintf(log_path, "%s/%02d-%02d-%04d.log", LOG_PATH, day, month, year);
     log_file = fopen(log_path, "a");
     free(log_path);
-    print_log(INFO_LOG, "The program has started\n");
+    print_log(info_log, "The program has started\n");
 
     read_zabbix_config();
 
     if(argc > 1){
         if(sscanf(argv[1], "%02d:%02d:%04d", &day, &month, &year) != 3){
-            print_log(ERROR_LOG, "The data from the arguments was read incorrectly. The date format must be DD:MM:YYYY.\n");
-            print_log(INFO_LOG, "The program ended\n\n");
+            print_log(error_log, "The data from the arguments was read incorrectly. The date format must be DD:MM:YYYY.\n");
+            print_log(info_log, "The program ended\n\n");
             fclose(log_file);
             return 1;
         }
@@ -668,8 +668,8 @@ int main(int argc, char * argv[]){
     free(conn_str);
 
     if(!SQL_SUCCEEDED(ret)){
-        print_log(ERROR_LOG, "Database connection error\n");
-        print_log(INFO_LOG, "The program ended\n\n");
+        print_log(error_log, "Database connection error\n");
+        print_log(info_log, "The program ended\n\n");
         fclose(log_file);
         return 1;
     }
@@ -677,8 +677,8 @@ int main(int argc, char * argv[]){
 
     SQLINTEGER users_count = 0;
     if(get_db_length(&users_count, "dbo.Userinfo", hStmt, NULL)){
-        print_log(ERROR_LOG, "Failed to get the number of users\n");
-        print_log(INFO_LOG, "The program ended\n\n");
+        print_log(error_log, "Failed to get the number of users\n");
+        print_log(info_log, "The program ended\n\n");
         fclose(log_file);
         return 1;
     }
@@ -687,8 +687,8 @@ int main(int argc, char * argv[]){
 
     SQLINTEGER depts_count = 0;
     if(get_db_length(&depts_count, "dbo.Dept", hStmt, NULL)){
-        print_log(ERROR_LOG, "Failed to get the number of depts\n");
-        print_log(INFO_LOG, "The program ended\n\n");
+        print_log(error_log, "Failed to get the number of depts\n");
+        print_log(info_log, "The program ended\n\n");
         fclose(log_file);
         return 1;
     }
@@ -700,8 +700,8 @@ int main(int argc, char * argv[]){
     sprintf(condition, "WHERE CheckTime BETWEEN '%04d-%02d-01T00:00:00.000' AND '%04d-%02d-%02dT23:59:59.999'",
             year, month, year, month, day);
     if(get_db_length(&rec_count, "dbo.Checkinout", hStmt, condition)){
-        print_log(ERROR_LOG, "Failed to get the number of records\n");
-        print_log(INFO_LOG, "The program ended\n\n");
+        print_log(error_log, "Failed to get the number of records\n");
+        print_log(info_log, "The program ended\n\n");
         fclose(log_file);
         return 1;
     }
@@ -730,9 +730,9 @@ int main(int argc, char * argv[]){
             if(workbook){
                 lxw_error error = workbook_close(workbook);
                 if(error){
-                    print_log(ERROR_LOG, "An error occurred while closing the workbook %s: %d\n", current_dept_name, error);
+                    print_log(error_log, "An error occurred while closing the workbook %s: %d\n", current_dept_name, error);
                 }else{
-                    print_log(INFO_LOG, "A report on the department was created: %s\n", current_dept_name);
+                    print_log(info_log, "A report on the department was created: %s\n", current_dept_name);
                 }
                 current_row = 0;
             }
@@ -772,12 +772,12 @@ int main(int argc, char * argv[]){
     if(workbook){
         lxw_error error = workbook_close(workbook);
         if(error){
-            print_log(ERROR_LOG, "An error occurred while closing the workbook %s: %d\n", current_dept_name, error);
+            print_log(error_log, "An error occurred while closing the workbook %s: %d\n", current_dept_name, error);
         }else{
-            print_log(INFO_LOG, "A report on the department was created: %s\n", current_dept_name);
+            print_log(info_log, "A report on the department was created: %s\n", current_dept_name);
         }
     }
-    print_log(INFO_LOG, "The program ended\n\n");
+    print_log(info_log, "The program ended\n\n");
     fclose(log_file);
 
     return 0;

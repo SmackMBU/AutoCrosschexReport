@@ -1,7 +1,1 @@
-build/logs/autodownload/*
-build/logs/autoreports/*
-!build/logs/autoreports/.gitkeep
-!build/logs/autodownload/.gitkeep
-!build/logs/.gitkeep
-
 .vscode
