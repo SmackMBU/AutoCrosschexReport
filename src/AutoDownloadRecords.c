@@ -179,47 +179,61 @@ int read_device_info(device_ip **devices_ip){
         print_log(error_log, "Failed to open devices config file %s\n", CFG_PATH);
         return -1;
     }
-
-    int slash_count = 0;
-    int ch, i;
-    int is_key = 0;
-    int j = 0;
     char tmp_str[50];
+    int ch, tmp_num, index = 0, slash_count = 0;
     device_ip devices[50];
 
     while((ch = fgetc(file)) != EOF){
-        if(ch == ':'){
-            is_key = 1;
-        }else if(ch == '\"'){
-            i = 0; 
-            while((ch = fgetc(file)) != EOF && ch != '\"'){
-                tmp_str[i] = ch;
-                i++;
-            }
-            tmp_str[i] = 0;
-            if(is_key && strlen(tmp_str) < MAX_IP_LEN){
-                strcpy(devices[j].ip, tmp_str);
-                is_key = 0;
-                j++;
-            }else{
-                devices[j].sensor_id = atoi(tmp_str);
-            }
-        }else if(ch == '/'){
-            slash_count++;
-            if(slash_count == 2){
+        switch(ch){
+            case '\"':
+                int i = 0;
+                while((ch = fgetc(file)) != '\"' && ch != EOF){
+                    tmp_str[i] = ch;
+                    i++;
+                }
+                tmp_str[i] = 0;
+                strncpy(devices[index].ip, tmp_str, MAX_IP_LEN);
+                index++;
+                break;
+
+            case '/':
+                slash_count++;
+                if(slash_count >= 2)
+                    while((ch = fgetc(file)) != '\n' && ch != EOF);
                 slash_count = 0;
-                while((ch = fgetc(file)) != EOF && ch != '\n');
-            }
+                break;
+
+            case ' ':
+                break;
+            case '\n':
+                break;
+            case '=':
+                break;
+
+            default:
+                tmp_num = ch-48;
+                while((ch = fgetc(file)) != '=' && ch != ' ' && ch != EOF){
+                    if(ch < 48 || ch > 57){
+                        printf("failed to read number in %s", CFG_PATH);
+                        return -1;
+                    }
+                    tmp_num *= 10;
+                    tmp_num += (ch-48);
+                }
+                devices[index].sensor_id = tmp_num;
         }
     }
     fclose(file);
-    *devices_ip = malloc(sizeof(device_ip)*j);
+
+    devices_ip = malloc(sizeof(device_ip)*index);
+
     if (!*devices_ip) {
         print_log(error_log, "Failed to allocate memory for devices_ip\n");
         return -1;
     }
-    memcpy(*devices_ip, devices, sizeof(device_ip)*j);
-    return j;
+
+    memcpy(*devices_ip, devices, sizeof(device_ip)*index);
+    return index;
 }
 
 struct tm *sec_to_date(int seconds){
