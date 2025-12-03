@@ -85,6 +85,13 @@ void print_log(const char *type, const char *fmt, ...) {
 
     va_end(vl);
 }
+LONG WINAPI CrashHandler(EXCEPTION_POINTERS* ExceptionInfo)
+{
+    print_log(error_log, "Crash detected! Code: 0x%08X\n",
+           ExceptionInfo->ExceptionRecord->ExceptionCode);
+    fclose(log_file);
+    return EXCEPTION_EXECUTE_HANDLER;
+}
 void read_db_config(SQLCHAR *conn_str){
     FILE *file = fopen(DB_CFG_PATH, "r");
     if(!file){
@@ -635,6 +642,7 @@ int main(int argc, char * argv[]){
     log_file = fopen(log_path, "a");
     free(log_path);
     print_log(info_log, "The program has started\n");
+    SetUnhandledExceptionFilter(CrashHandler);
 
     read_zabbix_config();
 
