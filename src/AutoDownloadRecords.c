@@ -227,13 +227,10 @@ struct tm *sec_to_date(int seconds){
     start.tm_year = 2000 - 1900;
     start.tm_mon  = 0;
     start.tm_mday = 2;
-    start.tm_hour = 0;
-    start.tm_min  = 0;
-    start.tm_sec  = 0;
 
-    time_t t = mktime(&start);
-
+    time_t t = _mkgmtime(&start);
     t += seconds;
+    t += UTC_OFFSET * 3600;
 
     return gmtime(&t);
 }
@@ -250,7 +247,7 @@ void insert_rec(SQLHSTMT *hStmt, unsigned int user_id, const struct tm *time, in
     char sql_query[150];
 
     sprintf(sql_query, "INSERT INTO dbo.Checkinout (Userid, CheckTime, Sensorid) VALUES ('%u', convert(datetime, '%04d-%02d-%02d %02d:%02d:%02d', 20), %d)",
-            user_id, time->tm_year+1900, time->tm_mon+1, time->tm_mday, time->tm_hour+UTC_OFFSET, time->tm_min, time->tm_sec, sensor_id);
+            user_id, time->tm_year+1900, time->tm_mon+1, time->tm_mday, time->tm_hour, time->tm_min, time->tm_sec, sensor_id);
 
     ret = SQLExecDirect(hStmt, (SQLCHAR*)sql_query, SQL_NTS);
     if (!(ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO)) {
