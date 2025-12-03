@@ -328,6 +328,10 @@ int main(){
     CChex_Init();
     
     for(int i = 0; i<devices_len; i++){
+        if (handle) {
+            CChex_Stop(handle);
+        }
+
         handle = CChex_Start();
         memset(&dev_info, 0, sizeof(dev_info));
 
@@ -349,6 +353,7 @@ int main(){
 
         if(devIdx < 0){
             CChex_Stop(handle);
+            handle = NULL;
             continue;
         }
 
@@ -400,9 +405,10 @@ int main(){
             Sleep(200);
         }
         CCHex_ClientDisconnect(handle, devIdx);
+
+        devIdx = -1;
         Sleep(2000);
 
-        while (CChex_Update(handle, &devIdx, &type, buffer, sizeof(buffer)) > 0);
         CChex_Stop(handle);
         handle = NULL;
     }
