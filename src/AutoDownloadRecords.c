@@ -237,7 +237,6 @@ struct tm *sec_to_date(int seconds){
 
     time_t t = _mkgmtime(&start);
     t += seconds;
-    t += UTC_OFFSET * 3600;
 
     return gmtime(&t);
 }
