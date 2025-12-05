@@ -40,3 +40,6 @@ run_auto: $(AUTO_BIN)
 
 run_reports: $(REPORTS_BIN)
 	$(REPORTS_BIN)
+
+test: $(BUILD_DIR)
+		$(CC) $(CFLAGS) $(AUTO_SRC) -o $(BUILD_DIR)/testAutoCrosschex.exe $(LIBS_AUTO) -DTEST

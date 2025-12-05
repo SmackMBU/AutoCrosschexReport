@@ -108,7 +108,7 @@ void read_db_config(SQLCHAR *conn_str){
                     value = NULL;
                 }
                 break;
-            
+
             case ' ':
                 break;
 
@@ -165,7 +165,7 @@ void read_zabbix_config(){
                     value = NULL;
                 }
                 break;
-            
+
             case ' ':
                 break;
 
@@ -198,7 +198,7 @@ int read_device_info(device_ip **devices_ip){
         if(ch == ':'){
             is_key = 1;
         }else if(ch == '\"'){
-            i = 0; 
+            i = 0;
             while((ch = fgetc(file)) != EOF && ch != '\"'){
                 tmp_str[i] = ch;
                 i++;
@@ -249,17 +249,21 @@ void rev_bytes(unsigned char *bytes, int size){
     }
 }
 void insert_rec(SQLHSTMT *hStmt, unsigned int user_id, const struct tm *time, int sensor_id){
-    SQLRETURN ret;
     char sql_query[150];
 
     sprintf(sql_query, "INSERT INTO dbo.Checkinout (Userid, CheckTime, Sensorid) VALUES ('%u', convert(datetime, '%04d-%02d-%02d %02d:%02d:%02d', 20), %d)",
             user_id, time->tm_year+1900, time->tm_mon+1, time->tm_mday, time->tm_hour, time->tm_min, time->tm_sec, sensor_id);
+#ifdef TEST
+    print_log(warning_log, "insert query: %s\n", sql_query);
+#else
+    SQLRETURN ret;
 
     ret = SQLExecDirect(hStmt, (SQLCHAR*)sql_query, SQL_NTS);
     if (!(ret == SQL_SUCCESS || ret == SQL_SUCCESS_WITH_INFO)) {
         print_log(warning_log, "An error occurred while executing a database query. Query: %s\n", sql_query);
     }
     SQLCloseCursor(hStmt);
+#endif
 }
 int cmp_records(CCHEX_RET_RECORD_INFO_STRU *rec1, CCHEX_RET_RECORD_INFO_STRU *rec2){
     for(int i = 0; i < MAX_EMPLOYEE_ID; i++){
@@ -280,7 +284,7 @@ int main(){
     struct tm *tm_now = localtime(&now);
     char log_path[64];
     zabbix_enabled = 0;
-    
+
     snprintf(log_path, sizeof(log_path), "%s/%02d-%02d-%04d.log", LOG_PATH, tm_now->tm_mday, tm_now->tm_mon+1, tm_now->tm_year+1900);
     log_file = fopen(log_path, "a");
     print_log(info_log, "The program has started\n");
@@ -311,7 +315,7 @@ int main(){
     read_db_config(conn_str);
     ret = SQLDriverConnect(hDbc, NULL, conn_str, SQL_NTS, NULL, 0, NULL, SQL_DRIVER_NOPROMPT);
     free(conn_str);
-    
+
     if(!SQL_SUCCEEDED(ret)){
         print_log(error_log, "Database connection error\n");
         print_log(info_log, "The program ended\n\n");
@@ -330,7 +334,7 @@ int main(){
     CCHEX_RET_RECORD_INFO_STRU prev_ret = {0};
 
     CChex_Init();
-    
+
     for(int i = 0; i<devices_len; i++){
         if (handle) {
             CChex_Stop(handle);
@@ -350,9 +354,11 @@ int main(){
             continue;
         }
         fail_counter = 0;
-
-        CChex_SetSdkConfig(handle, 0, 1, 0);
-
+#ifdef TEST
+        CChex_SetSdkConfig(handle, 0, 0, 0);
+#else
+	CChex_SetSdkConfig(handle, 0, 1, 0);
+#endif
         devIdx = CCHex_ClientConnect(handle, devices[i].ip, 5010);
 
         if(devIdx < 0){
@@ -375,7 +381,7 @@ int main(){
             }
             Sleep(200);
         }
-        
+
         print_log(info_log, "Number of new entries on device number %d: %u\n", devices[i].sensor_id, dev_info.NewRecNum);
 
         int j = 0;
@@ -398,7 +404,7 @@ int main(){
                     memcpy(&seconds, ret.Date, sizeof(seconds));
                     memcpy(&employee_id, ret.EmployeeId, sizeof(employee_id));
                     struct tm *date = sec_to_date(seconds);
-                    
+
                     insert_rec(hStmt, employee_id, date, devices[i].sensor_id);
 
                     print_log(info_log, "A new recording has been downloaded, Employee ID: %u\n",employee_id);
@@ -419,7 +425,7 @@ int main(){
 
     SQLFreeHandle(SQL_HANDLE_DBC, hDbc);
     SQLFreeHandle(SQL_HANDLE_ENV, hEnv);
-
+#ifndef TEST
     system(AUTO_REPORT_PATH);
 
     print_log(info_log, "Auto report was launched\n");
@@ -433,7 +439,7 @@ int main(){
 
         print_log(info_log, "The auto report for the previous month was launched\n");
     }
-
+#endif
     print_log(info_log, "The program ended\n\n");
     fclose(log_file);
     return 0;
