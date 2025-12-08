@@ -57,7 +57,9 @@ void print_log(const char *type, const char *fmt, ...) {
     va_start(vl, fmt);
 
     time_t now = time(NULL);
-    struct tm *tm_now = localtime(&now);
+
+    struct tm tm_now;
+    localtime_s(&tm_now, &now);
 
     char message[1024];
     va_list vl_copy;
@@ -79,7 +81,7 @@ void print_log(const char *type, const char *fmt, ...) {
 
     if (log_file) {
         fprintf(log_file, "[%02d:%02d:%02d] %s: %s",
-                tm_now->tm_hour, tm_now->tm_min, tm_now->tm_sec, type, message);
+                tm_now.tm_hour, tm_now.tm_min, tm_now.tm_sec, type, message);
         fflush(log_file);
     }
 
@@ -87,8 +89,8 @@ void print_log(const char *type, const char *fmt, ...) {
 }
 LONG WINAPI CrashHandler(EXCEPTION_POINTERS* ExceptionInfo)
 {
-    print_log(error_log, "Crash detected! Code: 0x%08X\n",
-           ExceptionInfo->ExceptionRecord->ExceptionCode);
+    print_log(error_log, "Crash detected! Code: 0x%08X\nFault address: %p\n",
+           ExceptionInfo->ExceptionRecord->ExceptionCode, ExceptionInfo->ExceptionRecord->ExceptionAddress);
     fclose(log_file);
     return EXCEPTION_EXECUTE_HANDLER;
 }

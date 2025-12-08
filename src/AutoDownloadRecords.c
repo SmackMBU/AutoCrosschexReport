@@ -37,7 +37,9 @@ void print_log(const char *type, const char *fmt, ...) {
     va_start(vl, fmt);
 
     time_t now = time(NULL);
-    struct tm *tm_now = localtime(&now);
+
+    struct tm tm_now;
+    localtime_s(&tm_now, &now);
 
     char message[1024];
     va_list vl_copy;
@@ -59,7 +61,7 @@ void print_log(const char *type, const char *fmt, ...) {
 
     if (log_file) {
         fprintf(log_file, "[%02d:%02d:%02d] %s: %s",
-                tm_now->tm_hour, tm_now->tm_min, tm_now->tm_sec, type, message);
+                tm_now.tm_hour, tm_now.tm_min, tm_now.tm_sec, type, message);
         fflush(log_file);
     }
 
@@ -67,8 +69,8 @@ void print_log(const char *type, const char *fmt, ...) {
 }
 LONG WINAPI CrashHandler(EXCEPTION_POINTERS* ExceptionInfo)
 {
-    print_log(error_log, "Crash detected! Code: 0x%08X\n",
-           ExceptionInfo->ExceptionRecord->ExceptionCode);
+    print_log(error_log, "Crash detected! Code: 0x%08X\nFault address: %p\n",
+           ExceptionInfo->ExceptionRecord->ExceptionCode, ExceptionInfo->ExceptionRecord->ExceptionAddress);
     fclose(log_file);
     return EXCEPTION_EXECUTE_HANDLER;
 }
@@ -229,7 +231,9 @@ int read_device_info(device_ip **devices_ip){
     return j;
 }
 
-struct tm *sec_to_date(int seconds){
+struct tm sec_to_date(int seconds){
+    struct tm result;
+
     struct tm start = {0};
     start.tm_year = 2000 - 1900;
     start.tm_mon  = 0;
@@ -238,7 +242,8 @@ struct tm *sec_to_date(int seconds){
     time_t t = _mkgmtime(&start);
     t += seconds;
 
-    return gmtime(&t);
+    gmtime_s(&result, &t);
+    return result;
 }
 void rev_bytes(unsigned char *bytes, int size){
     char tmp;
@@ -403,9 +408,9 @@ int main(){
 
                     memcpy(&seconds, ret.Date, sizeof(seconds));
                     memcpy(&employee_id, ret.EmployeeId, sizeof(employee_id));
-                    struct tm *date = sec_to_date(seconds);
+                    struct tm date = sec_to_date(seconds);
 
-                    insert_rec(hStmt, employee_id, date, devices[i].sensor_id);
+                    insert_rec(hStmt, employee_id, &date, devices[i].sensor_id);
 
                     print_log(info_log, "A new recording has been downloaded, Employee ID: %u\n",employee_id);
 
