@@ -188,47 +188,63 @@ int read_device_info(device_ip **devices_ip){
         print_log(error_log, "Failed to open devices config file %s\n", CFG_PATH);
         return -1;
     }
-
-    int slash_count = 0;
-    int ch, i;
-    int is_key = 0;
-    int j = 0;
     char tmp_str[50];
+    int ch, tmp_num, index = 0, slash_count = 0;
     device_ip devices[50];
 
     while((ch = fgetc(file)) != EOF){
-        if(ch == ':'){
-            is_key = 1;
-        }else if(ch == '\"'){
-            i = 0;
-            while((ch = fgetc(file)) != EOF && ch != '\"'){
-                tmp_str[i] = ch;
-                i++;
-            }
-            tmp_str[i] = 0;
-            if(is_key && strlen(tmp_str) < MAX_IP_LEN){
-                strcpy(devices[j].ip, tmp_str);
-                is_key = 0;
-                j++;
-            }else{
-                devices[j].sensor_id = atoi(tmp_str);
-            }
-        }else if(ch == '/'){
-            slash_count++;
-            if(slash_count == 2){
-                slash_count = 0;
-                while((ch = fgetc(file)) != EOF && ch != '\n');
-            }
+        switch(ch){
+            case '\"':
+                int k = 0;
+                while((ch = fgetc(file)) != '\"' && ch != EOF){
+                    tmp_str[k++] = ch;
+                }
+                tmp_str[k] = 0;
+                if(strlen(tmp_str) < MAX_IP_LEN){
+                    snprintf(devices[index].ip, sizeof(devices[index].ip), "%s", tmp_str);
+                    index++;
+                }
+                break;
+
+            case '/':
+                slash_count++;
+                if(slash_count >= 2){
+                    while((ch = fgetc(file)) != '\n' && ch != EOF);
+                    slash_count = 0;
+                }
+                break;
+
+            case ' ':
+                break;
+            case '\n':
+                break;
+            case '=':
+                break;
+
+            default:
+                tmp_num = ch-48;
+                while((ch = fgetc(file)) != '=' && ch != ' ' && ch != EOF){
+                    if(ch < 48 || ch > 57){
+                        print_log(warning_log, "failed to read number in %s, character:%c\n", CFG_PATH, ch);
+                        break;
+                    }
+                    tmp_num *= 10;
+                    tmp_num += (ch-48);
+                }
+                devices[index].sensor_id = tmp_num;
         }
     }
     fclose(file);
-    *devices_ip = malloc(sizeof(device_ip)*j);
+
+    *devices_ip = malloc(sizeof(device_ip)*index);
+
     if (!*devices_ip) {
         print_log(error_log, "Failed to allocate memory for devices_ip\n");
         return -1;
     }
-    memcpy(*devices_ip, devices, sizeof(device_ip)*j);
-    return j;
+
+    memcpy(*devices_ip, devices, sizeof(device_ip)*index);
+    return index;
 }
 
 struct tm sec_to_date(int seconds){
@@ -300,7 +316,7 @@ int main(){
     device_ip *devices = NULL;
     int devices_len = read_device_info(&devices);
     if(devices_len <= 0){
-        print_log(error_log, "Failed to get devices from cfg file\n");
+        print_log(error_log, "Failed to get devices from cfg file %d\n", devices_len);
         print_log(info_log, "The program ended\n\n");
 
         fclose(log_file);
@@ -330,52 +346,47 @@ int main(){
     }
     SQLAllocHandle(SQL_HANDLE_STMT, hDbc, &hStmt);
 
-    void *handle = NULL;
-    int devIdx;
-    int type = 0;
+    int type = 0, len = 0;
     char buffer[1024];
-    int len, fail_counter = 0;
-    CCHEX_RET_DEV_STATUS_STRU dev_info = {0};
-    CCHEX_RET_RECORD_INFO_STRU prev_ret = {0};
-
+    
     CChex_Init();
 
-    for(int i = 0; i<devices_len; i++){
-        if (handle) {
-            CChex_Stop(handle);
-        }
+    void* handle = CChex_Start();
+    print_log(info_log, "CChex_Start() -> handle=%p\n", handle);
+    Sleep(500);
 
-        handle = CChex_Start();
-        memset(&dev_info, 0, sizeof(dev_info));
-
-        if(!handle){
-            i--;
-            fail_counter++;
-            if(fail_counter >= 50){
-                print_log(error_log, "Failed to init Crosschex handle");
-                fclose(log_file);
-                return 1;
-            }
-            continue;
-        }
-        fail_counter = 0;
+    if(!handle){
+        print_log(error_log, "Failed to init Crosschex handle\n");
+        return 1;
+    }
 #ifdef TEST
-        CChex_SetSdkConfig(handle, 0, 0, 0);
+    CChex_SetSdkConfig(handle, 0, 0, 0);
 #else
 	CChex_SetSdkConfig(handle, 0, 1, 0);
 #endif
-        devIdx = CCHex_ClientConnect(handle, devices[i].ip, 5010);
+
+    for(int i = 0; i<devices_len; i++){
+        CCHEX_RET_DEV_STATUS_STRU dev_info = {0};
+        CCHEX_RET_RECORD_INFO_STRU prev_ret = {0};
+
+        int devIdx = CCHex_ClientConnect(handle, devices[i].ip, 5010);
+
+        Sleep(500);
+        print_log(info_log, "CCHex_ClientConnect(%s) -> devIdx=%d\n", devices[i].ip, devIdx);
 
         if(devIdx < 0){
-            CChex_Stop(handle);
-            handle = NULL;
+            print_log(error_log, "Failed to connect to device %d\n", devices[i].sensor_id);
             continue;
         }
 
-        Sleep(200);
         for(int j = 0; j<50; j++){
             len = CChex_Update(handle, &devIdx, &type, buffer, sizeof(buffer));
-            if ((size_t)len >= sizeof(dev_info) && type == 19) {
+
+            if (len > sizeof(buffer)) {
+                print_log(error_log, "SDK returned oversize packet: len=%d\n", len);
+                continue;
+            }
+            if ((size_t)len == sizeof(dev_info) && type == 19) {
                 memcpy(&dev_info, buffer, sizeof(dev_info));
                 if(dev_info.NewRecNum > 0){
                     CChex_DownloadAllNewRecords(handle, devIdx);
@@ -392,9 +403,14 @@ int main(){
         int j = 0;
         while(j < dev_info.NewRecNum){
             len = CChex_Update(handle, &devIdx, &type, buffer, sizeof(buffer));
+
             if(len > 0 && type == 71){
-                CCHEX_RET_RECORD_INFO_STRU ret;
-                if((size_t)len >= sizeof(ret)){
+                if (len > sizeof(buffer)) {
+                    print_log(error_log, "SDK returned oversize packet: len=%d\n", len);
+                    continue;
+                }
+                CCHEX_RET_RECORD_INFO_STRU ret = {0};
+                if((size_t)len == sizeof(ret)){
                     memcpy(&ret, buffer, sizeof(ret));
                     if(cmp_records(&ret, &prev_ret)){
                         Sleep(200);
@@ -415,19 +431,21 @@ int main(){
                     print_log(info_log, "A new recording has been downloaded, Employee ID: %u\n",employee_id);
 
                     j++;
+                }else{
+                    print_log(warning_log, "Record packet too small: %d bytes\n", len);
                 }
             }
             Sleep(200);
         }
+        print_log(info_log, "CCHex_ClientDisconnect(handle=%p, devIdx=%d) returned\n", handle, devIdx);
         CCHex_ClientDisconnect(handle, devIdx);
+        print_log(info_log, "client disconnected\n");
 
-        devIdx = -1;
         Sleep(2000);
-
-        CChex_Stop(handle);
-        handle = NULL;
     }
-
+    print_log(info_log, "CChex_Stop(handle=%p) about to call\n", handle);
+    CChex_Stop(handle);
+    print_log(info_log, "handle stopped\n");
     SQLFreeHandle(SQL_HANDLE_DBC, hDbc);
     SQLFreeHandle(SQL_HANDLE_ENV, hEnv);
 #ifndef TEST
