@@ -351,24 +351,23 @@ int main(){
     
     CChex_Init();
 
-    void* handle = CChex_Start();
-    print_log(info_log, "CChex_Start() -> handle=%p\n", handle);
-    Sleep(500);
-
-    if(!handle){
-        print_log(error_log, "Failed to init Crosschex handle\n");
-        return 1;
-    }
-#ifdef TEST
-    CChex_SetSdkConfig(handle, 0, 0, 0);
-#else
-	CChex_SetSdkConfig(handle, 0, 1, 0);
-#endif
-
     for(int i = 0; i<devices_len; i++){
         CCHEX_RET_DEV_STATUS_STRU dev_info = {0};
         CCHEX_RET_RECORD_INFO_STRU prev_ret = {0};
 
+        void* handle = CChex_Start();
+        print_log(info_log, "CChex_Start() -> handle=%p\n", handle);
+        Sleep(500);
+#ifdef TEST
+        CChex_SetSdkConfig(handle, 0, 0, 0);
+#else
+	    CChex_SetSdkConfig(handle, 0, 1, 0);
+#endif
+
+        if(!handle){
+            print_log(error_log, "Failed to init Crosschex handle\n");
+            continue;
+        }
         int devIdx = CCHex_ClientConnect(handle, devices[i].ip, 5010);
 
         Sleep(500);
@@ -440,12 +439,14 @@ int main(){
         print_log(info_log, "CCHex_ClientDisconnect(handle=%p, devIdx=%d) returned\n", handle, devIdx);
         CCHex_ClientDisconnect(handle, devIdx);
         print_log(info_log, "client disconnected\n");
+        Sleep(1000);
+        
+        print_log(info_log, "CChex_Stop(handle=%p) about to call\n", handle);
+        CChex_Stop(handle);
+        print_log(info_log, "handle stopped\n");
 
-        Sleep(2000);
+        Sleep(1000);
     }
-    print_log(info_log, "CChex_Stop(handle=%p) about to call\n", handle);
-    CChex_Stop(handle);
-    print_log(info_log, "handle stopped\n");
     SQLFreeHandle(SQL_HANDLE_DBC, hDbc);
     SQLFreeHandle(SQL_HANDLE_ENV, hEnv);
 #ifndef TEST
